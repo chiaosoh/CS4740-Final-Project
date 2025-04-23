@@ -4,9 +4,11 @@ const path = require('path');
 const fs = require('fs');
 const { File } = require('../models');
 const storageService = require('../services/storageService');
+const authenticate = require('../middleware/auth');
 
 const router = express.Router();
 const upload = multer({ dest: path.join(__dirname, '..', 'tmp') });
+router.use(authenticate);
 
 // Simulate multiple providers
 const providers = ['aws', 'gcp']; //TODO: add 3rd provider?
@@ -21,18 +23,27 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     const provider = chooseRandomProvider();
     const key = `${Date.now()}-${req.file.originalname}`;
 
-    // Upload on cloud storage
+    // Access permissions
+    const accessList = req.body.accessList || null;
+    // Access-based deletion
+    const deleteOnAccessBy = req.body.deleteOnAccessBy || null;
+
+    // Create on remote storage
     await storageService.uploadFile(req.file, key, provider);
-    //Remove temp file from mutler 
-    fs.unlinkSync(req.file.path); 
+    // Remove temp file from mutler
+    fs.unlinkSync(req.file.path);
+
     // Create record on local db
-    await File.create({
+    const file = await File.create({
       filename: req.file.originalname,
       storageKey: key,
-      provider
+      provider,
+      owner: req.user.name,
+      accessList,
+      deleteOnAccessBy
     });
 
-    res.json({ message: `Uploaded to ${provider}`, key });
+    res.json({ message: `Uploaded to ${provider}`, key, file });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Upload failed' });
@@ -42,11 +53,20 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 // List all files (in the DB)
 router.get('/', async (req, res) => {
   try {
+    const user = req.user.name;
+
     const files = await File.findAll({
-      where: { deletedAt: null },
+      where: {
+        deletedAt: null
+      },
       order: [['uploadedAt', 'DESC']]
     });
-    res.json(files);
+
+    const accessibleFiles = files.filter(file =>
+      file.owner === user || file.accessList === user
+    );
+
+    res.json(accessibleFiles);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to list files' });
@@ -57,9 +77,21 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const file = await File.findByPk(req.params.id);
-    if (!file) return res.status(404).json({ error: 'File not found' });
+    if (!file || file.deletedAt) return res.status(404).json({ error: 'File not found' });
+
+    const user = req.user.name;
+    const hasAccess = file.owner === user || file.accessList === user;
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const shouldDelete = (file.deleteOnAccessBy === user);
 
     await storageService.downloadFile(file.provider, file.storageKey, file.filename, res);
+
+    if (shouldDelete) {
+      await file.update({ deletedAt: new Date() });
+    }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Download failed' });
@@ -73,6 +105,12 @@ router.delete('/:id', async (req, res) => {
     if (!file || file.deletedAt) {
       return res.status(404).json({ error: 'File not found or already deleted' });
     }
+    // Only allow owner to mark files for deletion
+    const user = req.user.name;
+    if (file.owner !== user) {
+      return res.status(403).json({ error: 'Only the owner can delete this file' });
+    }
+    // Soft deletion
     await file.update({ deletedAt: new Date() });
     res.json({ message: 'File deleted' });
   } catch (err) {
@@ -93,6 +131,32 @@ router.post('/:id/restore', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Restore failed' });
+  }
+});
+
+// Delete all files marked for deletion that are older than 7 days
+router.delete('/cleanup', async (req, res) => {
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const expiredFiles = await File.findAll({
+      where: {
+        deletedAt: {
+          [Op.lt]: sevenDaysAgo
+        }
+      },
+      paranoid: false 
+    });
+
+    for (const file of expiredFiles) {
+      await storageService.deleteFile(file.provider, file.storageKey); 
+      await file.destroy({ force: true });
+    }
+
+    res.json({ message: `Permanently deleted ${expiredFiles.length} files.` });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to clean up old soft-deleted files.' });
   }
 });
 

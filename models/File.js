@@ -22,6 +22,19 @@ module.exports = (sequelize) => {
     deletedAt: {
       type: DataTypes.DATE,
       allowNull: true,
+    },
+    owner: {
+      type: DataTypes.STRING,
+      allowNull: false
+    },
+    accessList: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: null
+    },
+    deleteOnAccessBy: {
+      type: DataTypes.STRING,
+      allowNull: true
     }
   });
 };
