@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cloud Storage App</title>
+  </head>
+  <body>
+    <h1>Upload a File</h1>
+    <form id="uploadForm" enctype="multipart/form-data">
+      <input type="file" name="file" required />
+      <button type="submit">Upload</button>
+    </form>
+
+    <h2>Files</h2>
+    <ul id="fileList"></ul>
+
+    <button id="shuffleBtn">Shuffle Files</button>
+
+    <script>
+      const fileList = document.getElementById("fileList");
+
+      async function loadFiles() {
+        const res = await fetch("/files");
+        const files = await res.json();
+        fileList.innerHTML = "";
+        files.forEach((file) => {
+          const li = document.createElement("li");
+          li.innerHTML = `
+          ${file.filename} (${file.provider})
+          <a href="/files/${file.id}">Download</a>
+          <button onclick="deleteFile(${file.id})">Delete</button>
+        `;
+          fileList.appendChild(li);
+        });
+      }
+
+      async function deleteFile(id) {
+        await fetch(`/files/${id}`, { method: "DELETE" });
+        loadFiles();
+      }
+
+      document
+        .getElementById("uploadForm")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const formData = new FormData(e.target);
+          await fetch("/files/upload", {
+            method: "POST",
+            body: formData,
+          });
+          loadFiles();
+        });
+
+      document
+        .getElementById("shuffleBtn")
+        .addEventListener("click", async () => {
+          await fetch("/files/shuffle", { method: "POST" });
+          loadFiles();
+        });
+
+      loadFiles();
+    </script>
+  </body>
+</html>
