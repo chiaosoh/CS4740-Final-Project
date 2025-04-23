@@ -2,3 +2,4 @@
 node_modules/
 tmp/
 gcs-key.json
+database.sqlite

@@ -51,6 +51,13 @@ const aws = {
   deleteFile: async (key) => {
     const command = new DeleteObjectCommand({ Bucket: AWS_BUCKET, Key: key });
     await awsClient.send(command);
+  },
+
+  // for shuffle (requires a stream and not a buffer)
+  internalDownload: async (key) => {
+    const command = new GetObjectCommand({ Bucket: AWS_BUCKET, Key: key });
+    const { Body } = await awsClient.send(command);
+    return Body;
   }
 };
 
@@ -73,6 +80,12 @@ const gcs = {
   deleteFile: async (key) => {
     const remoteFile = GCS_BUCKET.file(key);
     await remoteFile.delete();
+  },
+
+  // for shuffle (requires a stream and not a buffer)
+  internalDownload: async (key) => {
+    const remoteFile = GCS_BUCKET.file(key);
+    return remoteFile.createReadStream();
   }
 };
 
@@ -94,6 +107,12 @@ module.exports = {
   deleteFile: async (provider, key) => {
     if (provider === 'aws') return aws.deleteFile(key);
     if (provider === 'gcp') return gcs.deleteFile(key);
+    throw new Error(`Unsupported provider: ${provider}`);
+  },
+
+  internalDownloadFile: async (provider, key) => {
+    if (provider === 'aws') return aws.internalDownload(key);
+    if (provider === 'gcp') return gcs.internalDownload(key);
     throw new Error(`Unsupported provider: ${provider}`);
   }
 };

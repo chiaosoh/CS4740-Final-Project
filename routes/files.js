@@ -81,4 +81,57 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+router.post('/shuffle', async (req, res) => {
+  try {
+    // List all files from the database
+    const files = await File.findAll();
+
+    if (files.length === 0) {
+      return res.status(404).json({ error: 'No files found to shuffle' });
+    }
+
+    for (const file of files) {
+      // Save old metadata
+      const oldProvider = file.provider;
+      const oldKey = file.storageKey;
+
+      // Choose a new random provider for each file
+      const newProvider = chooseRandomProvider();
+      // Generate a new key to avoid conflicts
+      const newKey = `${Date.now()}-${file.filename}`;
+
+      if (file.provider != newProvider) {
+        // Get file from old provider
+        const stream = await storageService.internalDownloadFile(file.provider, file.storageKey);
+
+        // Save temp file
+        const tempPath = path.join(__dirname, '..', 'tmp', `${Date.now()}-${file.filename}`);
+        const writeStream = fs.createWriteStream(tempPath);
+        await new Promise((resolve, reject) => {
+          stream.pipe(writeStream).on('finish', resolve).on('error', reject);
+        });
+        
+        // Upload to new provider
+        await storageService.uploadFile({ path: tempPath }, newKey, newProvider);
+
+        // Update the database with the new provider and storage key
+        await file.update({
+          provider: newProvider,
+          storageKey: newKey,
+        });
+
+        // Delete the file from the old provider
+        await storageService.deleteFile(oldProvider, oldKey);
+
+        fs.unlinkSync(tempPath);
+      }
+    }
+
+    res.json({ message: 'Files shuffled between providers successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error shuffling files' });
+  }
+});
+
 module.exports = router;
