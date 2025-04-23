@@ -42,7 +42,10 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 // List all files (in the DB)
 router.get('/', async (req, res) => {
   try {
-    const files = await File.findAll({ order: [['uploadedAt', 'DESC']] });
+    const files = await File.findAll({
+      where: { deletedAt: null },
+      order: [['uploadedAt', 'DESC']]
+    });
     res.json(files);
   } catch (err) {
     console.error(err);
@@ -67,13 +70,10 @@ router.get('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const file = await File.findByPk(req.params.id);
-    if (!file) return res.status(404).json({ error: 'File not found' });
-
-    // Delete on cloud storage
-    await storageService.deleteFile(file.provider, file.storageKey);
-    // Delete on local db
-    await file.destroy();
-
+    if (!file || file.deletedAt) {
+      return res.status(404).json({ error: 'File not found or already deleted' });
+    }
+    await file.update({ deletedAt: new Date() });
     res.json({ message: 'File deleted' });
   } catch (err) {
     console.error(err);
@@ -81,10 +81,28 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// Restore by DB id
+router.post('/:id/restore', async (req, res) => {
+  try {
+    const file = await File.findByPk(req.params.id);
+    if (!file || !file.deletedAt) {
+      return res.status(404).json({ error: 'File not found or not deleted' });
+    }
+    await file.update({ deletedAt: null });
+    res.json({ message: 'File restored' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Restore failed' });
+  }
+});
+
+// Shuffle files between providers
 router.post('/shuffle', async (req, res) => {
   try {
-    // List all files from the database
-    const files = await File.findAll();
+    // List all files from the database that aren't marked for deletion
+    const files = await File.findAll({
+      where: { deletedAt: null }
+  });
 
     if (files.length === 0) {
       return res.status(404).json({ error: 'No files found to shuffle' });

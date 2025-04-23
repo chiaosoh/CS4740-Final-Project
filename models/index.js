@@ -6,6 +6,6 @@ const sequelize = new Sequelize({
 
 const File = require('./File')(sequelize);
 
-sequelize.sync(); // Creates the table if it doesn't exist
+sequelize.sync({ force: true });
 
 module.exports = { sequelize, File };
